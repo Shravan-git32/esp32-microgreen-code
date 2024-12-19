@@ -1,0 +1,153 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <DHT.h>
+#include <Nokia_LCD.h>
+#include <SPI.h>
+
+// Pin definitions
+#define DHTPIN 4        // Pin for DHT11 sensor
+#define DHTTYPE DHT11   // DHT 11 type sensor
+#define MOISTURE_PIN 34 // Soil moisture sensor pin (analog input)
+#define RELAY_PIN 32    // Relay to control water valve
+#define FAN_PIN 33      // Relay to control fan
+#define BLUE_PIN 16     // Blue LED strip pin
+
+// DHT sensor setup
+DHT dht(DHTPIN, DHTTYPE);
+
+// Nokia 5110 LCD setup
+Nokia_LCD lcd(12, 13, 14, 15, 16); // Pins for Nokia 5110 LCD
+
+// Wi-Fi credentials
+const char *ssid = "your_SSID";
+const char *password = "your_PASSWORD";
+
+// API endpoint for data
+const String api_url = "http://your_api_endpoint"; // Replace with your actual API URL
+
+// Variables to hold API data
+float maxTemperature = 0.0;
+float minTemperature = 0.0;
+float maxHumidity = 0.0;
+float minHumidity = 0.0;
+float maxMoisture = 0.0;
+float minMoisture = 0.0;
+
+void setup() {
+  Serial.begin(115200);
+
+  // Initialize DHT sensor
+  dht.begin();
+
+  // Initialize pins
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(FAN_PIN, OUTPUT);
+  pinMode(MOISTURE_PIN, INPUT);
+  pinMode(BLUE_PIN, OUTPUT);
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi!");
+
+  // Initialize LCD
+  lcd.begin(84, 48);
+  lcd.setContrast(50);
+
+  // Get API data
+  getAPIData();
+}
+
+void loop() {
+  // Get sensor readings
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+  int soilMoisture = analogRead(MOISTURE_PIN);
+
+  // Display values on LCD
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Temp: ");
+  lcd.print(temperature);
+  lcd.setCursor(0, 1);
+  lcd.print("Humidity: ");
+  lcd.print(humidity);
+  lcd.setCursor(0, 2);
+  lcd.print("Soil: ");
+  lcd.print(soilMoisture);
+  delay(1000);
+
+  // Control fan based on temperature and humidity
+  controlFan(temperature, humidity);
+  controlWaterValve(soilMoisture);
+
+  delay(2000); // Delay before next reading
+}
+
+// Function to control the fan based on temperature and humidity
+void controlFan(float temperature, float humidity) {
+  if (temperature > maxTemperature) {
+    // Turn on fan if temperature exceeds maximum range
+    digitalWrite(FAN_PIN, HIGH);
+    setBlueLight(true);  // Turn on blue light for high temperature
+  } else if (temperature < minTemperature) {
+    // Turn off fan if temperature goes below minimum range
+    digitalWrite(FAN_PIN, LOW);
+    setBlueLight(false);  // Turn off blue light for low temperature
+  } else if (humidity > maxHumidity) {
+    // Turn on fan if humidity exceeds maximum range
+    digitalWrite(FAN_PIN, HIGH);
+    setBlueLight(true);  // Turn on blue light for high humidity
+  } else {
+    // Turn off fan if within the range
+    digitalWrite(FAN_PIN, LOW);
+    setBlueLight(false);  // Turn off blue light for normal conditions
+  }
+}
+
+// Function to control the water valve based on soil moisture
+void controlWaterValve(int soilMoisture) {
+  if (soilMoisture < maxMoisture) {
+    // Turn on water valve if soil moisture is below the threshold
+    digitalWrite(RELAY_PIN, HIGH);
+  } else if (soilMoisture > minMoisture) {
+    // Turn off water valve if soil moisture is above the threshold
+    digitalWrite(RELAY_PIN, LOW);
+  }
+}
+
+// Function to set RGB Blue LED light
+void setBlueLight(bool state) {
+  if (state) {
+    digitalWrite(BLUE_PIN, HIGH);  // Turn on blue light
+  } else {
+    digitalWrite(BLUE_PIN, LOW);   // Turn off blue light
+  }
+}
+
+// Function to fetch data from API
+void getAPIData() {
+  HTTPClient http;
+  http.begin(api_url);
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    String payload = http.getString();
+    // Parse the JSON response (make sure your API returns the data in JSON format)
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, payload);
+    maxTemperature = doc["maxTemperature"];
+    minTemperature = doc["minTemperature"];
+    maxHumidity = doc["maxHumidity"];
+    minHumidity = doc["minHumidity"];
+    maxMoisture = doc["maxMoisture"];
+    minMoisture = doc["minMoisture"];
+  } else {
+    Serial.println("Error in API request");
+  }
+
+  http.end();
+}
