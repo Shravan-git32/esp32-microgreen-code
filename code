@@ -1,0 +1,146 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <DHT.h>
+#include <Nokia_LCD.h>
+#include <SPI.h>
+#include <ArduinoJson.h>
+
+// Pin Definitions
+#define DHTPIN 4         // DHT11 data pin
+#define FAN_PIN 33       // Fan control using MOSFET
+#define WATER_VALVE_PIN 32 // Relay control for water valve
+#define BLUE_PIN 16      // RGB control using MOSFET
+#define SOIL_MOISTURE_PIN 34 // Analog input pin for soil moisture sensor
+
+// DHT11 Sensor Initialization
+DHT dht(DHTPIN, DHT11);
+
+// Initialize Nokia 5110 LCD
+Nokia_LCD lcd(6, 5, 4, 3, 2);  // Pin setup for the Nokia 5110 LCD
+
+// API URL for microgreen data
+const char* apiURL = "https://example.com/api";  // Replace with your actual API URL
+
+// Wi-Fi Credentials
+const char* ssid = "your-SSID";  // Replace with your Wi-Fi SSID
+const char* password = "your-password";  // Replace with your Wi-Fi password
+
+void setup() {
+  // Start Serial Communication for Debugging
+  Serial.begin(115200);  // Set baud rate to 115200 for faster serial communication
+
+  // Initialize DHT11 sensor
+  dht.begin();
+
+  // Initialize LCD
+  lcd.begin(84, 48);  // Initialize with the correct dimensions (84x48 for Nokia 5110 LCD)
+  lcd.setContrast(50);  // Set contrast level for the display
+
+  // Initialize Fan and LED pins
+  pinMode(FAN_PIN, OUTPUT);
+  pinMode(WATER_VALVE_PIN, OUTPUT);
+  pinMode(BLUE_PIN, OUTPUT);
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  Serial.println("Connecting to WiFi...");
+  
+  // Wait until connected to Wi-Fi
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting...");
+  }
+  
+  Serial.println("Connected to WiFi!");
+  
+  // Initializing API request
+  getDataFromAPI();  // Fetching initial data from the API
+}
+
+void loop() {
+  // Read temperature, humidity, and soil moisture
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+  int soilMoisture = analogRead(SOIL_MOISTURE_PIN);
+
+  // Print the sensor data to the Serial Monitor
+  Serial.print("Temperature: ");
+  Serial.print(temperature);
+  Serial.print("°C, Humidity: ");
+  Serial.print(humidity);
+  Serial.print("%, Soil Moisture: ");
+  Serial.println(soilMoisture);
+
+  // Update the LCD with the current values
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Temp: ");
+  lcd.print(temperature);
+  lcd.setCursor(0, 1);
+  lcd.print("Humidity: ");
+  lcd.print(humidity);
+
+  // Read API Data and Apply Logic to Control Devices
+  getDataFromAPI();
+
+  // Delay before the next reading
+  delay(2000);
+}
+
+void getDataFromAPI() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(apiURL);  // Initiate HTTP request to the API
+    int httpCode = http.GET();  // Send GET request
+
+    if (httpCode > 0) {
+      String payload = http.getString();  // Get the response payload
+
+      // Parse the JSON data from the API response
+      StaticJsonDocument<200> doc;
+      deserializeJson(doc, payload);
+      int tempMax = doc["temp_max"];
+      int tempMin = doc["temp_min"];
+      int soilMax = doc["soil_max"];
+      int humidityMax = doc["humidity_max"];
+
+      // Apply the logic for temperature control
+      if (temperature > tempMax) {
+        digitalWrite(FAN_PIN, HIGH);  // Turn on fan if temperature exceeds max
+        Serial.println("Temperature too high, turning on fan.");
+      } else if (temperature < tempMin) {
+        digitalWrite(BLUE_PIN, HIGH);  // Turn on LED if temperature falls below min
+        Serial.println("Temperature too low, turning on blue LED.");
+      } else {
+        digitalWrite(FAN_PIN, LOW);  // Keep fan off if temperature is in range
+        digitalWrite(BLUE_PIN, LOW);  // Keep blue LED off if in range
+        Serial.println("Temperature in range, no action needed.");
+      }
+
+      // Apply the logic for soil moisture control
+      if (soilMoisture < soilMax) {
+        digitalWrite(WATER_VALVE_PIN, HIGH);  // Turn on water valve if moisture is low
+        Serial.println("Soil moisture too low, turning on water valve.");
+      } else {
+        digitalWrite(WATER_VALVE_PIN, LOW);  // Keep water valve off if moisture is in range
+        Serial.println("Soil moisture in range, no action needed.");
+      }
+
+      // Apply the logic for humidity control
+      if (humidity > humidityMax) {
+        digitalWrite(FAN_PIN, HIGH);  // Turn on fan if humidity is too high
+        Serial.println("Humidity too high, turning on fan.");
+      } else {
+        digitalWrite(FAN_PIN, LOW);  // Keep fan off if humidity is in range
+        Serial.println("Humidity in range, no action needed.");
+      }
+
+    } else {
+      Serial.println("Failed to connect to the API.");
+    }
+
+    http.end();  // Close HTTP connection
+  } else {
+    Serial.println("Wi-Fi not connected.");
+  }
+}
